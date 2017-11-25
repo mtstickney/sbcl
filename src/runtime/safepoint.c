@@ -234,10 +234,13 @@ static inline gc_phase_t thread_gc_phase(struct thread* p)
 }
 
 static inline void thread_gc_promote(struct thread* p, gc_phase_t cur, gc_phase_t old) {
+    DWORD thread_id;
+
+    thread_id = GetThreadId(p->os_thread->handle);
     if (old != GC_NONE)
-        gc_state.phase_wait[old]--;
+        gc_state.phase_wait[old] -= thread_id;
     if (cur != GC_NONE) {
-        gc_state.phase_wait[cur]++;
+        gc_state.phase_wait[cur] += thread_id;
     }
     if (cur != GC_NONE)
         write_TLS(STOP_FOR_GC_PENDING,T,p);
@@ -354,6 +357,8 @@ static inline void gc_handle_phase()
  * can be GC_NONE, it means this thread wouldn't block GC_NONE, but still wait
  * for it. */
 static inline void gc_advance(gc_phase_t cur, gc_phase_t old) {
+    DWORD thread_id = GetCurrentThreadId();
+
     odxprint(safepoints,"GC advance request %d -> %d in phase %d",old,cur,gc_state.phase);
     if (cur == old)
         return;
@@ -362,11 +367,11 @@ static inline void gc_advance(gc_phase_t cur, gc_phase_t old) {
     if (old < gc_state.phase)
         old = GC_NONE;
     if (old != GC_NONE) {
-        gc_state.phase_wait[old]--;
+        gc_state.phase_wait[old] -= thread_id;
         odxprint(safepoints,"%d holders of phase %d without me",gc_state.phase_wait[old],old);
     }
     if (cur != GC_NONE) {
-        gc_state.phase_wait[cur]++;
+        gc_state.phase_wait[cur] += thread_id;
         odxprint(safepoints,"%d holders of phase %d with me",gc_state.phase_wait[cur],cur);
     }
     /* roll forth as long as there's no waiters */
@@ -703,11 +708,12 @@ void thread_interrupted(os_context_t *ctxptr)
 void
 gc_stop_the_world()
 {
+    DWORD thread_id = GetCurrentThreadId();
     struct thread* self = arch_os_get_current_thread();
     odxprint(safepoints, "stop the world");
     gc_state_lock();
     gc_state.collector = self;
-    gc_state.phase_wait[GC_QUIET]++;
+    gc_state.phase_wait[GC_QUIET] += thread_id;
 
     switch(gc_state.phase) {
     case GC_NONE:
@@ -717,7 +723,7 @@ gc_stop_the_world()
     case GC_INVOKED:
         gc_state_wait(GC_QUIET);
     case GC_QUIET:
-        gc_state.phase_wait[GC_QUIET]=1;
+        gc_state.phase_wait[GC_QUIET]=thread_id;
         gc_advance(GC_COLLECT,GC_QUIET);
         break;
     case GC_COLLECT:
