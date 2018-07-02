@@ -1539,7 +1539,7 @@ char *dirname(char *path)
 
 // 0 - not a socket or other error, 1 - has input, 2 - has no input
 int
-socket_input_available(HANDLE socket)
+socket_input_available(HANDLE socket, long to_sec, long to_usec)
 {
     int count = 0;
     int wsaErrno = GetLastError();
@@ -1551,6 +1551,8 @@ socket_input_available(HANDLE socket)
     FD_SET(socket, &readfds);
     FD_SET(socket, &errfds);
 
+    timeout.tv_sec = to_sec;
+    timeout.tv_usec = to_usec;
     count = select(0, &readfds, NULL, &errfds, &timeout);
     SetLastError(wsaErrno);
 

@@ -128,7 +128,9 @@
   (nevents (* dword)))
 
 (define-alien-routine "socket_input_available" int
-  (socket handle))
+  (socket handle)
+  (to-sec long)
+  (to-usec long))
 
 (define-alien-routine "console_handle_p" boolean
   (handle handle))
@@ -139,7 +141,7 @@
 ;;; introspect it, so we have to try various things until we find
 ;;; something that works.  Returns true if there could be input
 ;;; available, or false if there is not.
-(defun handle-listen (handle)
+(defun handle-listen (handle &optional (timeout 0))
   (cond ((console-handle-p handle)
          (alien-funcall (extern-alien "win32_tty_listen"
                                       (function boolean handle))
@@ -149,9 +151,10 @@
 
            (unless (zerop (peek-named-pipe handle nil 0 nil (addr avail) nil))
              (return-from handle-listen (plusp avail))))
-         (let ((res (socket-input-available handle)))
-           (unless (zerop res)
-             (return-from handle-listen (= res 1))))
+         (multiple-value-bind (to-sec to-msec) (truncate timeout 1000)
+           (let ((res (socket-input-available handle to-sec (* to-msec 1000))))
+             (unless (zerop res)
+               (return-from handle-listen (= res 1)))))
          t)))
 
 ;;; Clear all available input from a file handle.
