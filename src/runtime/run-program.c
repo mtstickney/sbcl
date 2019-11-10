@@ -29,6 +29,7 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <errno.h>
+#include <dirent.h>
 
 #ifdef LISP_FEATURE_OPENBSD
 #include <util.h>
@@ -134,6 +135,81 @@ int wait_for_exec(int pid, int channel[2]) {
     return pid;
 }
 
+void closefrom_fallback(int lowfd)
+{
+    int fd, maxfd = -1;
+#ifdef F_MAXFD
+    maxfd = fcntl(0, F_MAXFD);
+#endif
+
+#ifdef SVR4
+    if (-1 == maxfd)
+        maxfd = sysconf(_SC_OPEN_MAX)-1;
+#else
+    if (-1 == maxfd)
+        maxfd = getdtablesize()-1;
+#endif
+
+    for (fd = maxfd; fd >= lowfd; fd--)
+        close(fd);
+}
+
+int name2int (char *name)
+{
+    int i = 0;
+    char *p;
+    for (p = name; *p; p++)
+    {
+        i = i * 10 + (*p - '0');
+    }
+    return i;
+}
+
+int closefrom_fddir(char *dir, int lowfd)
+{
+    DIR *d;
+    struct dirent *ent;
+    int fd;
+
+    /* This may fail if e.g. the program is running in
+     * a chroot that does not include /proc, or potentially
+     * on old kernel versions. */
+    d = opendir(dir);
+    if (!d) return -1;
+
+    for (ent = readdir(d); ent; ent = readdir(d)) {
+        if (DT_LNK != ent->d_type) continue;
+
+        fd = name2int(ent->d_name);
+        if (fd >= lowfd)
+            close(fd);
+    }
+    closedir(d);
+    return 0;
+}
+
+void closefds_from(int lowfd)
+{
+    int fds_closed = 0;
+
+#ifdef defined(LISP_FEATURE_OPENBSD) \
+    || defined(LISP_FEATURE_NETBSD) \
+    || defined(LISP_FEATURE_DRAGONFLY)
+    closefrom(lowfd);
+#else
+#if defined(F_CLOSEM)
+    if (!fds_closed)
+        fds_closed = (-1 != fcntl(lowfd, F_CLOSEM));
+#endif
+    if (!fds_closed)
+        fds_closed = !closefrom_fddir("/dev/fd/", lowfd);
+    if (!fds_closed)
+        fds_closed = !closefrom_fddir("/proc/self/fd/", lowfd);
+    if (!fds_closed)
+        closefrom_fallback(lowfd);
+#endif
+}
+
 extern char **environ;
 int spawn(char *program, char *argv[], int sin, int sout, int serr,
           int search, char *envp[], char *pty_name,
@@ -141,18 +217,12 @@ int spawn(char *program, char *argv[], int sin, int sout, int serr,
           char *pwd)
 {
     pid_t pid;
-    int fd;
     sigset_t sset;
     int failure_code = 2;
 
     channel[0] = -1;
     channel[1] = -1;
-    if (!pipe(channel)) {
-        if (-1==fcntl(channel[1], F_SETFD,  FD_CLOEXEC)) {
-            close(channel[1]);
-            channel[1] = -1;
-        }
-    }
+    pipe(channel);
 
     pid = fork();
     if (pid) {
@@ -193,14 +263,17 @@ int spawn(char *program, char *argv[], int sin, int sout, int serr,
     if (serr >= 0)
         dup2(serr, 2);
     }
-    /* Close all other fds. */
-#ifdef SVR4
-    for (fd = sysconf(_SC_OPEN_MAX)-1; fd >= 3; fd--)
-        if (fd != channel[1]) close(fd);
-#else
-    for (fd = getdtablesize()-1; fd >= 3; fd--)
-        if (fd != channel[1]) close(fd);
-#endif
+    /* Close all other fds. First arrange for the pipe fd to be the
+     * lowest free fd, then close every open fd above that. */
+    channel[1] = dup2(channel[1], 3);
+    closefds_from(4);
+
+    if (-1 != channel[1]) {
+        if (-1==fcntl(channel[1], F_SETFD,  FD_CLOEXEC)) {
+            close(channel[1]);
+            channel[1] = -1;
+        }
+    }
 
     if (pwd && chdir(pwd) < 0) {
        failure_code = 3;
