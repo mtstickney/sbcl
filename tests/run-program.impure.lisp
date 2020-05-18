@@ -21,7 +21,7 @@
 
 (with-test (:name (run-program :cat 1))
   (let* ((process (run-program "cat" '() :wait nil
-                               :search t :output :stream :input :stream))
+                               :search t :output :stream :input :stream :error nil))
          (out (process-input process))
          (in (process-output process)))
     (unwind-protect
@@ -35,7 +35,7 @@
                   :skipped-on (or (not :sb-thread) :win32))
   ;; Tests that reading from a FIFO is interruptible.
   (let* ((process (run-program "/bin/cat" '()
-                               :wait nil :output :stream :input :stream))
+                               :wait nil :output :stream :input :stream :error nil))
          (in (process-input process))
          (out (process-output process))
          (sem (sb-thread:make-semaphore))
@@ -106,7 +106,7 @@
     (let ((process (run-program "cat" '()
                                 :search t
                                 :wait t
-                                :output out :input in))
+                                :output out :input in :error nil))
           (buf (make-array (length data))))
       (declare (ignore process))
       (assert (= 13 (read-sequence buf out)))
@@ -118,6 +118,7 @@
   (let* ((process (run-program "cat" '() :wait nil
                                :search t
                                :output (make-broadcast-stream)
+                               :error nil
                                :input :stream))
          (in (process-input process)))
     (unwind-protect
@@ -152,7 +153,7 @@
   (defparameter *cat-out* (make-synonym-stream '*cat-out-pipe*)))
 
 (with-test (:name (run-program :cat 5) :fails-on :win32)
-  (let ((cat (run-program "/bin/cat" nil :input *cat-in* :output *cat-out*
+  (let ((cat (run-program "/bin/cat" nil :input *cat-in* :output *cat-out* :error nil
                           :wait nil)))
     (dolist (test '("This is a test!"
                     "This is another test!"
@@ -169,7 +170,7 @@
 (with-test (:name :is-/bin/ed-installed?)
   (assert (probe-file "/bin/ed")))
 
-#-win32
+#-(and)
 (progn
   (defparameter *tmpfile* (scratch-file-name))
 
@@ -210,7 +211,7 @@
 ;; Around 1.0.12 there was a regression when :INPUT or :OUTPUT was a
 ;; pathname designator.  Since these use the same code, it should
 ;; suffice to test just :INPUT.
-(with-test (:name (run-program :input :output pathname))
+(with-test (:name (run-program :input :output pathname :error nil))
   (with-scratch-file (file)
     (with-open-file (f file :direction :output)
       (setf file (truename file))
@@ -240,6 +241,7 @@
                                       collect (sb-thread:make-thread #'start-run)))
             #-sb-thread (loop repeat 10 collect (start-run))))))
 
+#-(and)
 (with-test (:name (run-program :pty-stream) :fails-on :win32)
   (let (process
         stream)
@@ -348,6 +350,7 @@
                             #+win32 "cmd.exe"
                             #+win32 '("/c" "cd")
                             :output :stream
+                            :error nil
                             :directory directory
                             :search t))))
     (assert
@@ -495,3 +498,8 @@
       (assert (not (zerop (process-exit-code process)))
               ()
               "File descriptor above the max-fd limit from parent not closed in child process."))))
+
+(with-test (:name (run-program :output-stream-read))
+  (let ((proc (run-program "echo" '("foo bar") :search t :output :stream :error nil)))
+    (with-open-stream (stream (process-output proc))
+      (assert (string= (read-line stream) "foo bar")))))

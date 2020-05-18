@@ -30,6 +30,7 @@
 #include <termios.h>
 #include <errno.h>
 #include <dirent.h>
+#include <stdio.h>
 
 #ifdef LISP_FEATURE_OPENBSD
 #include <util.h>
@@ -167,7 +168,11 @@ int closefrom_fddir(char *dir, int lowfd)
     if (!d) return -1;
 
     for (ent = readdir(d); ent; ent = readdir(d)) {
-        if (DT_LNK != ent->d_type) continue;
+        fprintf(stderr, "Considering fd of type %u\n", ent->d_type);
+        if (DT_LNK != ent->d_type) {
+                fprintf(stderr, "Skipping %s\n", ent->d_name);
+                continue;
+        }
 
         /* atoi will return bogus values for certain inputs, but lowfd will
          * prevent us from closing anything we care about. */
