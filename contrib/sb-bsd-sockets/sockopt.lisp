@@ -70,7 +70,7 @@ Code for options that not every system has should be conditionalised:
          ,@(if supportedp
                `((sb-alien:with-alien ((buffer ,buffer-type))
                    (setf buffer ,(if mangle-arg
-                                     `(,mangle-arg new-value)
+                                     `(,mangle-arg new-value buffer)
                                      `new-value))
                    (socket-error-case
                        ("setsockopt"
@@ -126,7 +126,8 @@ Code for options that not every system has should be conditionalised:
       nil
       t))
 
-(defun bool-to-foreign-int (val)
+(defun bool-to-foreign-int (val buffer)
+  (declare (ignore buffer))
   (if val 1 0))
 
 (defmacro define-socket-option-bool (name level c-name &optional features (info ""))
@@ -170,13 +171,31 @@ Code for options that not every system has should be conditionalised:
     sockint::so-bindtodevice sb-alien:c-string nil identity-1 cast-to-pointer
     :linux "Available only on Linux"))
 
+(sb-alien:define-alien-type nil
+    (sb-alien:struct linger
+      (l-onoff #+win32 sb-alien:unsigned-short #-win32 sb-alien:int)
+      (l-linger #+win32 sb-alien:unsigned-short #-win32 sb-alien:int)))
+
+(defun set-linger-struct (opt buffer)
+  (setf (sb-alien:slot buffer 'l-onoff) (if opt 1 0)
+        (sb-alien:slot buffer 'l-linger) (or opt 0))
+  buffer)
+
+(defun struct-to-linger-opt (buffer size)
+  (declare (ignore size))
+  (if (zerop (sb-alien:slot buffer 'l-onoff))
+      nil
+      (sb-alien:slot buffer 'l-linger)))
+
+(define-socket-option sockopt-linger
+    "Return the value of the SO-LINGER option for SOCKET, or NIL if
+lingering is disabled. Can also be updated with SETF."
+  sockint::sol-socket sockint::so-linger
+  (sb-alien:struct linger) set-linger-struct struct-to-linger-opt sb-alien:addr)
+
 ;;; other kinds of socket option
 
 ;;; so_peercred takes a ucre structure
-;;; so_linger struct linger {
-;                  int   l_onoff;    /* linger active */
-;                  int   l_linger;   /* how many seconds to linger for */
-;              };
 
 #|
 

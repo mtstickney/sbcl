@@ -111,6 +111,8 @@ sockopt-receive-low-water)}.
 
 @include fun-sb-bsd-sockets-sockopt-tcp-nodelay.texinfo
 
+@include fun-sb-bsd-sockets-sockopt-linger.texinfo
+
 @node INET Domain Sockets
 @section INET Domain Sockets
 

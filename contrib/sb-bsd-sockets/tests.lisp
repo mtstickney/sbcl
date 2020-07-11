@@ -351,6 +351,57 @@
   t)
 
 #+ipv4-support
+(deftest sockopt-linger-simple
+    (let ((socket (make-instance 'inet-socket :type :stream :protocol :tcp))
+          linger1 linger2)
+      (unwind-protect
+           (progn
+             (setf (sockopt-linger socket) 13
+                   linger1 (sockopt-linger socket))
+             (setf (sockopt-linger socket) nil
+                   linger2 (sockopt-linger socket))
+
+             (and (= linger1 13)
+                  (eq linger2 nil)))
+        (socket-close socket)))
+  t)
+
+;; On win32, a TCP reset will drop any unread data in the receive
+;; buffer, so we have a way to detect a hard-close from the other
+;; end. Other platforms do not necessarily do this.
+#+(and ipv4-support sb-thread win32)
+(deftest sockopt-hard-close-flush
+    (let ((listen-sock (make-instance 'inet-socket :type :stream :protocol :tcp))
+          (client-sock (make-instance 'inet-socket :type :stream :protocol :tcp))
+          server-sock
+          client-stream server-stream
+          port)
+      (unwind-protect
+           (progn
+             (socket-bind listen-sock #(127 0 0 1) 0)
+             (setf port (nth-value 1 (socket-name listen-sock)))
+             (socket-listen listen-sock 1)
+
+             (let ((client-thread (sb-thread:make-thread
+                                   (lambda ()
+                                     (socket-connect client-sock #(127 0 0 1) port)
+                                     (let ((stream (socket-make-stream client-sock :output t :buffering :none)))
+                                       (write-char #\a stream)
+                                       (setf (sockopt-linger client-sock) 0)
+                                       (close stream))))))
+               (setf server-sock (socket-accept listen-sock))
+               (sb-thread:join-thread client-thread)
+               (let ((stream (socket-make-stream server-sock :input t :buffering :none)))
+                 ;; The client hard-closed the connection before we
+                 ;; read any data, so all unread data should have been
+                 ;; flushed, and we'll get EOF on read.
+                 (read-char stream nil nil))))
+        (socket-close listen-sock)
+        (socket-close client-sock)
+        (and server-sock (socket-close server-sock))))
+  nil)
+
+#+ipv4-support
 (deftest socket-open-p-true.1
     (socket-open-p (make-instance 'inet-socket :type :stream :protocol :tcp))
   t)
